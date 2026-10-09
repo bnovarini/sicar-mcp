@@ -19,13 +19,17 @@ Hosted endpoint (no install, no key): `https://sicar-mcp.fly.dev/mcp`
 | `find_property_at` | Properties whose perimeter contains a latitude/longitude. |
 | `overlap_check` | Properties overlapping a given property, with overlap area in hectares and as a share of the property. |
 | `municipality_summary` | Registrations in a municipality: counts, declared hectares, status, type and size breakdowns. |
+| `municipality_layers` | Per municipality: properties with each layer, hectares, and share of declared area (Reserva Legal, APP, native vegetation, consolidated area, hydrography, easement, restricted use, fallow). |
 | `search_properties` | Filter by state or municipality, status, type and size. Paged. |
+
+`get_property` also returns a `layers` block with the same eight layer totals for that property.
 
 Every answer carries `snapshot_date` and a caveat. `search_properties` returns `{"properties": [...], "pagination": {"has_more", "next_offset", "returned"}}`.
 
 ## Data
 
-- Source: the public SICAR consultation GeoServer of the Servico Florestal Brasileiro (`https://geoserver.car.gov.br/geoserver/sicar/wfs`, layers `sicar_imoveis_<uf>`), property perimeter layer only. APP, Reserva Legal, native vegetation and the other CAR layers are not in the public service and are not included.
+- Source: the public SICAR consultation GeoServer of the Servico Florestal Brasileiro (`https://geoserver.car.gov.br/geoserver/sicar/wfs`, layers `sicar_imoveis_<uf>`), property perimeter layer.
+- Layer totals: per-property sums of polygon area (hectares; hydrography as polygon area) for Reserva Legal, APP, native vegetation, consolidated area, hydrography, administrative easement, restricted use and fallow, aggregated from the Base dos Dados copy of SICAR (`basedosdados.br_sfb_sicar` on BigQuery, extraction dated 2026-06-02 to 2026-08-04, older than the perimeter snapshot). No geometry is served for these layers. 7.93M properties have at least one layer; 99.94% of those join to the perimeter snapshot by `cod_imovel`. Layers can overlap each other, and a few properties have a polygon total above their declared area.
 - Snapshot: harvested 8-9 October 2026. 8,537,561 properties in 27 state layers. Per-state counts match the server's own feature counts at the start of the harvest (the harvest found 27 more in ten states, registered while it ran; none missing).
 - Fields: `cod_imovel`, `status_imovel` (AT active, PE pending, SU suspended, CA cancelled), `condicao`, declared `area` (ha), `m_fiscal`, `tipo_imovel`, `uf`, `municipio`, `cod_municipio_ibge`, creation and update dates, perimeter (EPSG:4674).
 - The state prefix in a CAR code does not always match the state layer it was published in (a few BA- codes sit in the SE layer). Lookups use the code as published.
@@ -48,5 +52,5 @@ Parquet output is about 3.7 GB in total. The server uses DuckDB with the spatial
 ## Not included
 
 - Owner or holder information. It is restricted in SICAR. A seller can give you their CAR code; this server can check that the code exists, is active and matches the stated area and municipality. Ownership is proven by the matricula at the cartorio.
-- APP, Reserva Legal, vegetation and hydrography layers (captcha-protected downloads on the SICAR site).
+- Layer geometry (only per-property totals are served).
 - Rural credit, embargoes, deforestation alerts and other overlays.
