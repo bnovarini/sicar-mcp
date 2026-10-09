@@ -1,0 +1,6 @@
+FROM python:3.12-slim
+WORKDIR /app
+COPY pyproject.toml README.md ./
+COPY src ./src
+ENV PYTHONPATH=/app/src
+CMD ["sh", "-c", "mkdir -p /data/raw && python -u -m sicar_mcp.harvest /data/raw ALL 4 >> /data/harvest.out 2>&1; sleep infinity"]
