@@ -23,7 +23,7 @@ CAVEAT = ("CAR is self-declared by the property holder and is not proof of owner
 NOTE = (
     "Data: public SICAR (Sistema Nacional de Cadastro Ambiental Rural) property perimeters, read from the Servico Florestal Brasileiro public GeoServer "
     "and stored as a snapshot. Every answer carries the snapshot date. Areas are in hectares as SICAR declares them; geometry is EPSG:4674 (SIRGAS 2000, "
-    "longitude/latitude). Only property perimeters are included; APP, Reserva Legal, native vegetation and other CAR layers are not. "
+    "longitude/latitude). Property perimeters come from the snapshot; per-property totals for Reserva Legal, APP, native vegetation, consolidated area, hydrography, administrative easement, restricted use and fallow come from the Base dos Dados copy of SICAR (an older extraction, see layers_source). "
     + CAVEAT + " Property codes look like 'DF-5300108-3CE57FCD...'; the state prefix in a code does not always match the state layer it was published in."
 )
 mcp = FastMCP("sicar-mcp", instructions=NOTE)
@@ -52,6 +52,8 @@ def con() -> duckdb.DuckDBPyConnection:
         except Exception:
             c.execute("INSTALL spatial; LOAD spatial")
         c.execute(f"CREATE VIEW a AS SELECT * FROM read_parquet('{d}/attrs.parquet')")
+        if (d / "layers.parquet").exists():
+            c.execute(f"CREATE VIEW l AS SELECT * FROM read_parquet('{d}/layers.parquet')")
         c.execute(f"CREATE TABLE muns AS SELECT * FROM read_parquet('{d}/municipios.parquet')")
         _con = c
     return _con
@@ -82,6 +84,32 @@ def _prop(r: dict) -> dict:
     r["area_ha"] = r.pop("area", None)
     r["bbox"] = [r.pop("xmin", None), r.pop("ymin", None), r.pop("xmax", None), r.pop("ymax", None)]
     return r
+
+
+LAYERS = [("reserva_legal", "Reserva Legal (legal reserve)"), ("app", "APP (permanent preservation area)"),
+          ("vegetacao_nativa", "native vegetation remnant"), ("area_consolidada", "consolidated area (land use before 2008)"),
+          ("hidrografia", "hydrography (water bodies and watercourses as polygons)"), ("servidao_administrativa", "administrative easement"),
+          ("uso_restrito", "restricted-use area"), ("area_pousio", "fallow area")]
+LAYERS_SOURCE = ("Base dos Dados (basedosdados.br_sfb_sicar, BigQuery), SICAR extraction dated 2026-06-02 to 2026-08-04 per state; older than the property snapshot. "
+                 "Hectares are the sum of declared layer polygons per property, as published; layers can overlap each other and a property can be reported with a polygon "
+                 "total above its declared area. Properties with no polygon in a layer have no entry for that layer.")
+
+
+def _has_layers() -> bool:
+    return (data_dir() / "layers.parquet").exists()
+
+
+def _layer_block(r: dict, area) -> dict | None:
+    if not r:
+        return None
+    out = {}
+    for k, label in LAYERS:
+        ha = r.get(k + "_ha")
+        if ha is None:
+            out[k] = None
+            continue
+        out[k] = {"hectares": ha, "polygons": r.get(k + "_n"), "share_of_declared_area": round(ha / area, 3) if area else None}
+    return out
 
 
 def _files(cods: list[int] | None = None, point: tuple | None = None, bbox: tuple | None = None) -> list[str]:
@@ -140,6 +168,10 @@ def get_property(cod_imovel: str, include_geometry: bool = False) -> dict:
         return _ans(found=False, message="No property with that code in this snapshot. It may be mistyped, registered after the snapshot, or cancelled and removed.")
     r = _prop(rows[0])
     out = {"found": True, "property": r}
+    if _has_layers():
+        lr = run("SELECT * FROM l WHERE cod_imovel = ?", [code])
+        out["layers"] = _layer_block(lr[0], r.get("area_ha")) if lr else None
+        out["layers_source"] = LAYERS_SOURCE
     if include_geometry:
         fs = _files([r["cod_municipio_ibge"]], bbox=tuple(r["bbox"]))
         g = run(f"SELECT ST_AsGeoJSON(ST_GeomFromWKB(geom)) AS g FROM {_read(fs)} WHERE cod_imovel = ?", [code]) if fs else []
@@ -206,6 +238,28 @@ def _muns_for(uf: Optional[str], municipio: Optional[str], codigo: Optional[int]
     if not w:
         raise ValueError("give a municipio (with uf), or cod_municipio_ibge")
     return [r["cod_municipio_ibge"] for r in run("SELECT DISTINCT cod_municipio_ibge FROM muns WHERE " + " AND ".join(w), p)]
+
+
+@mcp.tool(description="Reserva Legal, APP, native vegetation, consolidated area, hydrography, easement, restricted-use and fallow totals for one municipality (name plus uf, or IBGE code), from the Base dos Dados copy of SICAR: "
+                      "number of properties with each layer, total hectares, and the share of the declared area of those same properties. Layer data is an older extraction than the property snapshot.")
+def municipality_layers(municipio: Optional[str] = None, uf: Optional[str] = None, cod_municipio_ibge: Optional[int] = None) -> dict:
+    if not _has_layers():
+        return _ans(found=False, message="Layer data is not loaded in this deployment.")
+    cods = _muns_for(uf, municipio, cod_municipio_ibge)
+    if not cods:
+        return _ans(found=False, message="No municipality matched. Check the spelling and pass uf (a state code) with the name.")
+    ph = ",".join("?" * len(cods))
+    sel = ", ".join(f"count(l.{k}_ha) AS {k}_properties, round(sum(l.{k}_ha),1) AS {k}_ha, round(sum(CASE WHEN l.{k}_ha IS NOT NULL THEN a.area END),1) AS {k}_declared_ha_of_those" for k, _ in LAYERS)
+    rows = run(f"SELECT a.cod_municipio_ibge, any_value(a.municipio) AS municipio, any_value(a.uf) AS uf, count(*) AS properties, round(sum(a.area),1) AS declared_ha, {sel} "
+               f"FROM a LEFT JOIN l USING (cod_imovel) WHERE a.cod_municipio_ibge IN ({ph}) GROUP BY 1 ORDER BY 1", cods)
+    out = []
+    for r in rows:
+        d = {k: r[k] for k in ("cod_municipio_ibge", "municipio", "uf", "properties", "declared_ha")}
+        for k, label in LAYERS:
+            tot, dec = r[k + "_ha"], r[k + "_declared_ha_of_those"]
+            d[k] = {"properties_with_layer": r[k + "_properties"], "hectares": tot, "share_of_declared_area_of_those_properties": round(tot / dec, 3) if tot and dec else None}
+        out.append(d)
+    return _ans(municipalities=out, layers_source=LAYERS_SOURCE)
 
 
 @mcp.tool(description="Summary of CAR registrations in one municipality (by name plus uf, or IBGE code): number of properties, total declared hectares, breakdown by status and "
