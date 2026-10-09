@@ -1,0 +1,13 @@
+app = "sicar-mcp"
+primary_region = "iad"
+[build]
+  dockerfile = "Dockerfile"
+[env]
+  SICAR_MODE = "build"
+  SICAR_SNAPSHOT = "2026-10-08"
+[mounts]
+  source = "sicardata"
+  destination = "/data"
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "2gb"
