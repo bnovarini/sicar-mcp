@@ -1,0 +1,10 @@
+app = "sicar-mcp"
+primary_region = "iad"
+[build]
+  dockerfile = "Dockerfile.harvest"
+[mounts]
+  source = "sicardata"
+  destination = "/data"
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "2gb"
