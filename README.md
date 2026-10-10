@@ -54,3 +54,13 @@ Parquet output is about 3.7 GB in total. The server uses DuckDB with the spatial
 - Owner or holder information. It is restricted in SICAR. A seller can give you their CAR code; this server can check that the code exists, is active and matches the stated area and municipality. Ownership is proven by the matricula at the cartorio.
 - Layer geometry (only per-property totals are served).
 - Rural credit, embargoes, deforestation alerts and other overlays.
+
+## Usage logging
+
+The hosted server keeps a small usage log, with no personal data and no query contents. For each initialize and tool call it stores: UTC timestamp, event, tool name, and the client name and version the client sends in the MCP initialize handshake. No IP addresses, arguments or results are stored. It is a SQLite table (`/data/usage.db`) on the same machine. Set `SICAR_USAGE_LOG=0` to turn it off.
+
+Read the stats from the machine (the number is the window in days, default 30):
+
+```
+fly ssh console -a sicar-mcp -C "python -m sicar_mcp.usage 30"
+```
