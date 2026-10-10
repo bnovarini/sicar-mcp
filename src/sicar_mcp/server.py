@@ -363,7 +363,11 @@ def http_app():
     async def healthz(request):
         return JSONResponse({"ok": True, "snapshot": meta().get("snapshot_date")})
 
-    return RateLimit(mcp.streamable_http_app(), int(os.environ.get("SICAR_RATE_PER_MIN", "40")))
+    app = RateLimit(mcp.streamable_http_app(), int(os.environ.get("SICAR_RATE_PER_MIN", "40")))
+    if os.environ.get("SICAR_USAGE_LOG", "1") != "0":
+        from .usage import UsageLog
+        app = UsageLog(app, [t.name for t in mcp._tool_manager.list_tools()])
+    return app
 
 
 def main() -> None:
