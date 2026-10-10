@@ -11,6 +11,7 @@ primary_region = "iad"
   SICAR_THREADS = "2"
   SICAR_QUERY_TIMEOUT = "40"
   SICAR_RATE_PER_MIN = "40"
+  SICAR_USAGE_DB = "/data/usage.db"
 
 [mounts]
   source = "sicardata"
